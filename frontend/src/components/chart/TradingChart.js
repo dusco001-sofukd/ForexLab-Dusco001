@@ -1,12 +1,19 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import { createChart, CandlestickSeries, LineSeries, createSeriesMarkers } from "lightweight-charts";
 
-export default function TradingChart({ data, indicators, trades, visibleBars, onCrosshairMove }) {
+const TradingChart = forwardRef(function TradingChart({ data, indicators, trades, visibleBars, onCrosshairMove }, ref) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const candleSeriesRef = useRef(null);
   const indicatorSeriesRef = useRef([]);
   const markersRef = useRef(null);
+
+  // Expose chart and series refs to parent
+  useImperativeHandle(ref, () => ({
+    getChart: () => chartRef.current,
+    getSeries: () => candleSeriesRef.current,
+    getContainer: () => containerRef.current,
+  }), []);
 
   // Create chart once
   useEffect(() => {
@@ -186,4 +193,6 @@ export default function TradingChart({ data, indicators, trades, visibleBars, on
   return (
     <div ref={containerRef} className="w-full h-full" data-testid="trading-chart" />
   );
-}
+});
+
+export default TradingChart;

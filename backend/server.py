@@ -234,12 +234,67 @@ async def get_pairs():
     return {"pairs": list(PAIRS.keys())}
 
 @api_router.get("/forex/data/{pair}")
-async def get_forex_data(pair: str, timeframe: str = "1h", bars: int = 500):
+async def get_forex_data(pair: str, timeframe: str = "1h", bars: int = 500, source: str = "generated"):
     pair = pair.replace("-", "/")
     if pair not in PAIRS:
         raise HTTPException(404, f"Pair {pair} not found")
+
+    if source == "live":
+        av_key = os.environ.get("ALPHA_VANTAGE_KEY", "")
+        if av_key and av_key != "demo":
+            from_symbol, to_symbol = pair.split("/")
+            try:
+                async with httpx.AsyncClient() as client_http:
+                    # Free tier only supports FX_DAILY and FX_WEEKLY
+                    # Intraday is premium - try daily for all timeframes
+                    if timeframe in ["1d", "4h", "1h", "30m", "15m", "5m", "1m"]:
+                        url = f"https://www.alphavantage.co/query?function=FX_DAILY&from_symbol={from_symbol}&to_symbol={to_symbol}&apikey={av_key}&outputsize=full"
+                    resp = await client_http.get(url, timeout=20.0)
+                    raw = resp.json()
+
+                ts_key = None
+                for k in raw:
+                    if "Time Series" in k:
+                        ts_key = k
+                        break
+
+                if ts_key:
+                    series = raw[ts_key]
+                    data = []
+                    for dt_str, vals in sorted(series.items()):
+                        try:
+                            dt = datetime.fromisoformat(dt_str.replace(" ", "T"))
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=timezone.utc)
+                            data.append({
+                                "time": dt_str,
+                                "timestamp": int(dt.timestamp()),
+                                "open": float(vals["1. open"]),
+                                "high": float(vals["2. high"]),
+                                "low": float(vals["3. low"]),
+                                "close": float(vals["4. close"]),
+                                "volume": 0,
+                            })
+                        except Exception:
+                            continue
+                    if len(data) > 0:
+                        data = data[-min(bars, len(data)):]
+                        note = ""
+                        if timeframe != "1d":
+                            note = " (daily data - intraday requires premium)"
+                        return {"pair": pair, "timeframe": timeframe, "data": data, "source": "alpha_vantage", "note": note}
+                # If we get here, AV didn't return data - check for error message
+                if "Note" in raw or "Error Message" in raw or "Information" in raw:
+                    msg = raw.get("Note", raw.get("Error Message", raw.get("Information", "")))
+                    logger.warning(f"Alpha Vantage: {msg}")
+            except Exception as e:
+                logger.error(f"Alpha Vantage error: {e}")
+        # Fallback to generated
+        data = generate_ohlc_data(pair, timeframe, min(bars, 2000))
+        return {"pair": pair, "timeframe": timeframe, "data": data, "source": "generated_fallback"}
+
     data = generate_ohlc_data(pair, timeframe, min(bars, 2000))
-    return {"pair": pair, "timeframe": timeframe, "data": data}
+    return {"pair": pair, "timeframe": timeframe, "data": data, "source": "generated"}
 
 @api_router.get("/forex/live/{pair}")
 async def get_live_data(pair: str, timeframe: str = "1h"):
@@ -624,6 +679,140 @@ async def run_backtest_endpoint(req: BacktestRequest, user: dict = Depends(get_c
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.backtests.insert_one(doc)
+    
+    return {"ohlc": ohlc, "result": result}
+
+# ─── Custom Strategy Execution ───
+class CustomBacktestRequest(BaseModel):
+    pair: str
+    timeframe: str = "1h"
+    bars: int = 500
+    code: str
+
+@api_router.post("/backtest/custom")
+async def run_custom_backtest(req: CustomBacktestRequest, user: dict = Depends(get_current_user)):
+    pair = req.pair.replace("-", "/")
+    if pair not in PAIRS:
+        raise HTTPException(404, f"Pair {pair} not found")
+    
+    ohlc = generate_ohlc_data(pair, req.timeframe, min(req.bars, 2000))
+    closes = [c["close"] for c in ohlc]
+    opens = [c["open"] for c in ohlc]
+    highs = [c["high"] for c in ohlc]
+    lows = [c["low"] for c in ohlc]
+    volumes = [c["volume"] for c in ohlc]
+    n = len(closes)
+    signals = [0] * n
+    
+    # Build sandboxed namespace
+    sandbox = {
+        "closes": closes,
+        "opens": opens,
+        "highs": highs,
+        "lows": lows,
+        "volumes": volumes,
+        "signals": signals,
+        "n": n,
+        "sma": calc_sma,
+        "ema": calc_ema,
+        "rsi": calc_rsi,
+        "macd": calc_macd,
+        "bollinger": calc_bollinger,
+        "abs": abs,
+        "max": max,
+        "min": min,
+        "sum": sum,
+        "len": len,
+        "range": range,
+        "round": round,
+        "float": float,
+        "int": int,
+        "enumerate": enumerate,
+        "zip": zip,
+        "math": math,
+    }
+    
+    # Disallow dangerous operations
+    forbidden = ["import", "exec", "eval", "open", "__", "os.", "sys.", "subprocess", "globals", "locals", "compile", "getattr", "setattr", "delattr", "dir("]
+    code_lower = req.code.lower()
+    for word in forbidden:
+        if word in code_lower:
+            raise HTTPException(400, f"Forbidden keyword detected: '{word}'")
+    
+    try:
+        import signal as sig_module
+        
+        def timeout_handler(signum, frame):
+            raise TimeoutError("Strategy execution timed out (5s limit)")
+        
+        old_handler = sig_module.signal(sig_module.SIGALRM, timeout_handler)
+        sig_module.alarm(5)
+        
+        try:
+            exec(req.code, {"__builtins__": {}}, sandbox)
+        finally:
+            sig_module.alarm(0)
+            sig_module.signal(sig_module.SIGALRM, old_handler)
+        
+        signals = sandbox["signals"]
+    except TimeoutError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"Strategy execution error: {type(e).__name__}: {str(e)}")
+    
+    # Run trade execution with the signals
+    trades = []
+    position = None
+    equity = 10000.0
+    equity_curve = [equity]
+    peak_equity = equity
+    max_drawdown = 0
+    
+    for i in range(n):
+        if signals[i] == 1 and position is None:
+            position = {"entry_price": closes[i], "entry_idx": i, "entry_time": ohlc[i]["time"], "type": "long"}
+        elif signals[i] == -1 and position is not None and position["type"] == "long":
+            pnl_pct = (closes[i] - position["entry_price"]) / position["entry_price"]
+            pnl = equity * pnl_pct
+            equity += pnl
+            trades.append({"entry_time": position["entry_time"], "exit_time": ohlc[i]["time"], "entry_price": position["entry_price"], "exit_price": closes[i], "type": "long", "pnl": round(pnl, 2), "pnl_pct": round(pnl_pct * 100, 4), "entry_idx": position["entry_idx"], "exit_idx": i})
+            position = None
+        elif signals[i] == -1 and position is None:
+            position = {"entry_price": closes[i], "entry_idx": i, "entry_time": ohlc[i]["time"], "type": "short"}
+        elif signals[i] == 1 and position is not None and position["type"] == "short":
+            pnl_pct = (position["entry_price"] - closes[i]) / position["entry_price"]
+            pnl = equity * pnl_pct
+            equity += pnl
+            trades.append({"entry_time": position["entry_time"], "exit_time": ohlc[i]["time"], "entry_price": position["entry_price"], "exit_price": closes[i], "type": "short", "pnl": round(pnl, 2), "pnl_pct": round(pnl_pct * 100, 4), "entry_idx": position["entry_idx"], "exit_idx": i})
+            position = None
+        
+        equity_curve.append(round(equity, 2))
+        if equity > peak_equity:
+            peak_equity = equity
+        dd = (peak_equity - equity) / peak_equity * 100 if peak_equity > 0 else 0
+        if dd > max_drawdown:
+            max_drawdown = dd
+    
+    wins = [t for t in trades if t["pnl"] > 0]
+    losses_list = [t for t in trades if t["pnl"] <= 0]
+    total_pnl = sum(t["pnl"] for t in trades)
+    
+    result = {
+        "total_trades": len(trades),
+        "winning_trades": len(wins),
+        "losing_trades": len(losses_list),
+        "win_rate": round(len(wins) / len(trades) * 100, 2) if trades else 0,
+        "total_pnl": round(total_pnl, 2),
+        "total_pnl_pct": round(total_pnl / 10000 * 100, 2),
+        "max_drawdown": round(max_drawdown, 2),
+        "avg_win": round(sum(t["pnl"] for t in wins) / len(wins), 2) if wins else 0,
+        "avg_loss": round(sum(t["pnl"] for t in losses_list) / len(losses_list), 2) if losses_list else 0,
+        "profit_factor": round(abs(sum(t["pnl"] for t in wins)) / abs(sum(t["pnl"] for t in losses_list)), 2) if losses_list and sum(t["pnl"] for t in losses_list) != 0 else 0,
+        "final_equity": round(equity, 2),
+        "equity_curve": equity_curve,
+        "trades": trades,
+        "signals": signals,
+    }
     
     return {"ohlc": ohlc, "result": result}
 

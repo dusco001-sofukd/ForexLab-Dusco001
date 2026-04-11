@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { ChevronDown, Save, Trash2, Play } from "lucide-react";
+import { ChevronDown, Save, Trash2, Play, Code } from "lucide-react";
+import CustomStrategyEditor from "./CustomStrategyEditor";
 
 const STRATEGY_TEMPLATES = {
   ma_crossover: {
@@ -24,6 +25,11 @@ const STRATEGY_TEMPLATES = {
     description: "Buy on MACD/Signal bullish cross, sell on bearish cross",
     params: { fast: 12, slow: 26, signal: 9 },
   },
+  custom: {
+    label: "Custom Code",
+    description: "Write your own strategy in Python",
+    params: {},
+  },
 };
 
 const PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CHF", "NZD/USD", "EUR/GBP", "USD/CAD"];
@@ -32,8 +38,9 @@ const TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
 export default function StrategyPanel({
   selectedPair, onPairChange,
   selectedTimeframe, onTimeframeChange,
-  onRunBacktest, loading,
+  onRunBacktest, onRunCustomBacktest, loading,
   savedStrategies, onSaveStrategy, onDeleteStrategy, onLoadStrategy,
+  customCode, onCustomCodeChange, customError,
 }) {
   const [strategyType, setStrategyType] = useState("ma_crossover");
   const [params, setParams] = useState({ ...STRATEGY_TEMPLATES.ma_crossover.params });
@@ -44,7 +51,9 @@ export default function StrategyPanel({
 
   const handleStrategyChange = (type) => {
     setStrategyType(type);
-    setParams({ ...STRATEGY_TEMPLATES[type].params });
+    if (type !== "custom") {
+      setParams({ ...STRATEGY_TEMPLATES[type].params });
+    }
   };
 
   const handleParamChange = (key, val) => {
@@ -52,12 +61,20 @@ export default function StrategyPanel({
   };
 
   const handleRun = () => {
-    onRunBacktest(strategyType, params);
+    if (strategyType === "custom") {
+      onRunCustomBacktest(customCode);
+    } else {
+      onRunBacktest(strategyType, params);
+    }
   };
 
   const handleSave = () => {
     if (!stratName.trim()) return;
-    onSaveStrategy(stratName.trim(), strategyType, params);
+    if (strategyType === "custom") {
+      onSaveStrategy(stratName.trim(), "custom", { code: customCode });
+    } else {
+      onSaveStrategy(stratName.trim(), strategyType, params);
+    }
     setStratName("");
   };
 
@@ -107,25 +124,35 @@ export default function StrategyPanel({
         <p className="mt-2 font-body text-xs text-black/50">{template.description}</p>
       </div>
 
-      {/* Strategy Params */}
-      <div className="p-4 border-b border-black flex-1 overflow-y-auto">
-        <Label className="font-mono text-xs uppercase tracking-[0.2em] text-black/60 mb-3 block">Parameters</Label>
-        <div className="space-y-3">
-          {Object.entries(params).map(([key, val]) => (
-            <div key={key}>
-              <label className="font-mono text-xs text-black/60 block mb-1">{key.replace(/_/g, " ").toUpperCase()}</label>
-              <Input
-                data-testid={`param-${key}`}
-                type="number"
-                value={val}
-                onChange={(e) => handleParamChange(key, e.target.value)}
-                className="rounded-none border-black h-9 font-mono text-sm focus:ring-0 focus:border-black"
-                step={key === "std_dev" ? 0.1 : 1}
-              />
-            </div>
-          ))}
+      {/* Strategy Params or Code Editor */}
+      {strategyType === "custom" ? (
+        <div className="border-b border-black flex-1 overflow-hidden flex flex-col" style={{ minHeight: "200px" }}>
+          <CustomStrategyEditor
+            code={customCode}
+            onCodeChange={onCustomCodeChange}
+            error={customError}
+          />
         </div>
-      </div>
+      ) : (
+        <div className="p-4 border-b border-black flex-1 overflow-y-auto">
+          <Label className="font-mono text-xs uppercase tracking-[0.2em] text-black/60 mb-3 block">Parameters</Label>
+          <div className="space-y-3">
+            {Object.entries(params).map(([key, val]) => (
+              <div key={key}>
+                <label className="font-mono text-xs text-black/60 block mb-1">{key.replace(/_/g, " ").toUpperCase()}</label>
+                <Input
+                  data-testid={`param-${key}`}
+                  type="number"
+                  value={val}
+                  onChange={(e) => handleParamChange(key, e.target.value)}
+                  className="rounded-none border-black h-9 font-mono text-sm focus:ring-0 focus:border-black"
+                  step={key === "std_dev" ? 0.1 : 1}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Run & Save */}
       <div className="p-4 border-b border-black">

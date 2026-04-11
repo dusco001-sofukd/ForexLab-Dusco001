@@ -265,6 +265,127 @@ class ForexTesterAPITest:
         
         return False
 
+    def test_custom_backtest_valid(self):
+        """Test custom backtest with valid Python code"""
+        valid_code = """
+# Simple SMA crossover strategy
+fast = sma(closes, 8)
+slow = sma(closes, 21)
+
+for i in range(1, n):
+    if fast[i] is not None and slow[i] is not None:
+        if fast[i-1] is not None and slow[i-1] is not None:
+            if fast[i-1] <= slow[i-1] and fast[i] > slow[i]:
+                signals[i] = 1
+            elif fast[i-1] >= slow[i-1] and fast[i] < slow[i]:
+                signals[i] = -1
+"""
+        
+        payload = {
+            "pair": "EUR-USD",
+            "timeframe": "1h", 
+            "bars": 200,
+            "code": valid_code
+        }
+        
+        try:
+            response = self.session.post(f"{self.api_url}/backtest/custom", json=payload)
+            if response.status_code == 200:
+                data = response.json()
+                if "result" in data and "ohlc" in data:
+                    result = data["result"]
+                    required_fields = ["total_trades", "win_rate", "total_pnl", "signals"]
+                    if all(field in result for field in required_fields):
+                        self.log_test("Custom Backtest (Valid Code)", True)
+                        return True
+                    else:
+                        self.log_test("Custom Backtest (Valid Code)", False, "Missing result fields")
+                else:
+                    self.log_test("Custom Backtest (Valid Code)", False, "No result in response")
+            else:
+                self.log_test("Custom Backtest (Valid Code)", False, f"Status {response.status_code}: {response.text}")
+        except Exception as e:
+            self.log_test("Custom Backtest (Valid Code)", False, f"Exception: {str(e)}")
+        
+        return False
+
+    def test_custom_backtest_forbidden(self):
+        """Test custom backtest with forbidden keywords"""
+        forbidden_code = """
+import os
+print("This should be blocked")
+"""
+        
+        payload = {
+            "pair": "EUR-USD",
+            "timeframe": "1h",
+            "bars": 100,
+            "code": forbidden_code
+        }
+        
+        try:
+            response = self.session.post(f"{self.api_url}/backtest/custom", json=payload)
+            if response.status_code == 400:
+                data = response.json()
+                if "forbidden" in data.get("detail", "").lower():
+                    self.log_test("Custom Backtest (Forbidden Keywords)", True)
+                    return True
+                else:
+                    self.log_test("Custom Backtest (Forbidden Keywords)", False, "Should block forbidden keywords")
+            else:
+                self.log_test("Custom Backtest (Forbidden Keywords)", False, f"Expected 400, got {response.status_code}")
+        except Exception as e:
+            self.log_test("Custom Backtest (Forbidden Keywords)", False, f"Exception: {str(e)}")
+        
+        return False
+
+    def test_forex_data_live_source(self):
+        """Test forex data with live source (Alpha Vantage)"""
+        try:
+            response = self.session.get(f"{self.api_url}/forex/data/EUR-USD", 
+                                      params={"timeframe": "1h", "bars": 100, "source": "live"})
+            if response.status_code == 200:
+                data = response.json()
+                if "data" in data and "source" in data:
+                    # Should return either alpha_vantage or generated_fallback
+                    source = data["source"]
+                    if source in ["alpha_vantage", "generated_fallback"]:
+                        self.log_test("Forex Data (Live Source)", True)
+                        return True
+                    else:
+                        self.log_test("Forex Data (Live Source)", False, f"Unexpected source: {source}")
+                else:
+                    self.log_test("Forex Data (Live Source)", False, "Missing data or source in response")
+            else:
+                self.log_test("Forex Data (Live Source)", False, f"Status {response.status_code}: {response.text}")
+        except Exception as e:
+            self.log_test("Forex Data (Live Source)", False, f"Exception: {str(e)}")
+        
+        return False
+
+    def test_forex_data_generated_source(self):
+        """Test forex data with generated source"""
+        try:
+            response = self.session.get(f"{self.api_url}/forex/data/EUR-USD", 
+                                      params={"timeframe": "1h", "bars": 100, "source": "generated"})
+            if response.status_code == 200:
+                data = response.json()
+                if "data" in data and "source" in data:
+                    source = data["source"]
+                    if source == "generated":
+                        self.log_test("Forex Data (Generated Source)", True)
+                        return True
+                    else:
+                        self.log_test("Forex Data (Generated Source)", False, f"Expected 'generated', got '{source}'")
+                else:
+                    self.log_test("Forex Data (Generated Source)", False, "Missing data or source in response")
+            else:
+                self.log_test("Forex Data (Generated Source)", False, f"Status {response.status_code}: {response.text}")
+        except Exception as e:
+            self.log_test("Forex Data (Generated Source)", False, f"Exception: {str(e)}")
+        
+        return False
+
     def run_all_tests(self):
         """Run all API tests"""
         print("🚀 Starting Forex Strategy Tester API Tests")
@@ -274,6 +395,11 @@ class ForexTesterAPITest:
         print("\n📊 Testing Public Endpoints:")
         self.test_forex_pairs()
         self.test_forex_data()
+        
+        # Test new Alpha Vantage integration
+        print("\n🌐 Testing Alpha Vantage Integration:")
+        self.test_forex_data_live_source()
+        self.test_forex_data_generated_source()
         
         # Test authentication flow
         print("\n🔐 Testing Authentication:")
@@ -286,6 +412,12 @@ class ForexTesterAPITest:
             self.test_indicators_calculate()
             self.test_backtest()
             self.test_strategies_crud()
+            
+            # Test new custom backtest functionality
+            print("\n🐍 Testing Custom Strategy Sandbox:")
+            self.test_custom_backtest_valid()
+            self.test_custom_backtest_forbidden()
+            
             self.test_auth_logout()
         
         # Print summary
