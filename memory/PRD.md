@@ -5,57 +5,41 @@ Build a forex strategy tester with chart replay functionality.
 
 ## Architecture
 - **Backend**: FastAPI + MongoDB (Motor async driver)
-- **Frontend**: React 19 + TailwindCSS + Shadcn UI + lightweight-charts v5 (TradingView)
-- **Auth**: JWT httpOnly cookies + bcrypt password hashing
-- **Data**: Alpha Vantage API (live daily data) + Generated OHLC data
-
-## User Personas
-1. **Retail Forex Trader** - Tests strategies against historical data before live trading
-2. **Strategy Developer** - Builds custom strategies with Python code editor
-
-## Core Requirements (Static)
-- Interactive candlestick chart with TradingView lightweight-charts
-- Chart replay with play/pause/speed/step controls
-- Built-in strategies: MA Crossover, RSI, Bollinger Bands, MACD
-- Custom strategy code editor (Python sandbox)
-- Backtest execution with P&L, win rate, drawdown metrics
-- Trade history table
-- Technical indicator overlays (SMA, EMA, RSI, MACD, Bollinger)
-- User authentication (register/login/logout)
-- Save/load/delete strategies
-- Multiple currency pairs and timeframes
-- Live Alpha Vantage forex data integration
-- Drawing tools (horizontal lines, trendlines)
+- **Frontend**: React 19 + TailwindCSS + Shadcn UI + lightweight-charts v5
+- **Auth**: JWT httpOnly cookies + bcrypt
+- **Data**: Alpha Vantage API (live FX_DAILY) + Generated OHLC + CSV import
 
 ## What's Been Implemented
 ### Phase 1 (2026-04-11)
-- Full auth system with JWT cookies, admin seeding, brute force protection
-- 8 forex pairs with realistic OHLC data generation
-- 7 timeframes (1m to 1d)
-- Backtest engine for 4 strategy types
-- Indicator calculation engine (SMA, EMA, RSI, MACD, Bollinger)
+- Full auth system (JWT cookies, admin seeding, brute force protection)
+- 8 forex pairs, 7 timeframes, realistic OHLC generation
+- Backtest engine (MA Crossover, RSI, Bollinger Bands, MACD)
+- Indicator engine (SMA, EMA, RSI, MACD, Bollinger)
 - Chart replay with full controls
-- Strategy CRUD operations
-- Swiss high-contrast UI design
+- Strategy CRUD, Swiss UI design
 
 ### Phase 2 (2026-04-11)
-- Alpha Vantage API integration with real API key (FX_DAILY - free tier)
-- GEN/LIVE data source toggle in top bar
-- Custom strategy Python code editor with sandbox execution
-- Strategy examples library (SMA Crossover, RSI Reversal, Bollinger Bounce, MACD Histogram, EMA+RSI)
-- Drawing tools: horizontal lines, trendlines, price levels
-- Drawing toolbar with tool selection and clear-all
-- Canvas overlay for real-time drawing rendering
+- Alpha Vantage live data (FX_DAILY free tier), GEN/LIVE toggle
+- Custom Python strategy code editor with sandbox execution
+- Drawing tools (horizontal lines, trendlines, price levels)
+
+### Phase 3 (2026-04-11)
+- Equity curve visualization (canvas chart in bottom panel)
+- CSV data import (parse user-uploaded OHLC files)
+- Stop Loss / Take Profit risk management (% and PIPS modes)
+- Shared execute_trades() engine with SL/TP checking on highs/lows
+- Trade exit reasons (SL, TP, Signal) shown in trade history
+- Manual Buy/Sell buttons with open position tracking + unrealized P&L
+- Manual trades merge into trade history
 
 ## Prioritized Backlog
 ### P1 (High)
-- Equity curve chart visualization in results panel
-- User-uploaded CSV data import
-- Risk management (stop loss, take profit) in strategies
+- Strategy comparison/leaderboard mode
 - Position sizing calculator
+- Multi-timeframe analysis
 
 ### P2 (Medium)
-- Strategy comparison/leaderboard mode
-- Export backtest results to CSV
-- More drawing tools (rectangles, Fibonacci, rays)
-- Multi-timeframe analysis
+- Export backtest results to CSV/PDF
+- More drawing tools (Fibonacci, rectangles, channels)
+- Alert system for price levels
+- Dark mode toggle
