@@ -20,6 +20,7 @@ export default function TradeHistory({ trades }) {
             <th className="font-mono text-[10px] uppercase tracking-[0.15em] text-black/60 px-4 py-2">Exit Price</th>
             <th className="font-mono text-[10px] uppercase tracking-[0.15em] text-black/60 px-4 py-2">P&L</th>
             <th className="font-mono text-[10px] uppercase tracking-[0.15em] text-black/60 px-4 py-2">P&L %</th>
+            <th className="font-mono text-[10px] uppercase tracking-[0.15em] text-black/60 px-4 py-2">Exit</th>
           </tr>
         </thead>
         <tbody>
@@ -30,6 +31,7 @@ export default function TradeHistory({ trades }) {
                 <span className={`px-2 py-0.5 text-[10px] font-bold uppercase ${t.type === "long" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
                   {t.type}
                 </span>
+                {t.manual && <span className="ml-1 px-1 py-0.5 text-[8px] font-bold uppercase bg-blue-100 text-blue-700">M</span>}
               </td>
               <td className="font-mono text-xs px-4 py-2 text-black/70">{formatTime(t.entry_time)}</td>
               <td className="font-mono text-xs px-4 py-2 text-black/70">{formatTime(t.exit_time)}</td>
@@ -40,6 +42,13 @@ export default function TradeHistory({ trades }) {
               </td>
               <td className={`font-mono text-xs px-4 py-2 ${t.pnl_pct >= 0 ? "text-green-600" : "text-red-600"}`}>
                 {t.pnl_pct >= 0 ? "+" : ""}{t.pnl_pct.toFixed(2)}%
+              </td>
+              <td className="font-mono text-xs px-4 py-2">
+                {t.exit_reason === "sl" && <span className="px-1.5 py-0.5 text-[9px] font-bold bg-red-100 text-red-600">SL</span>}
+                {t.exit_reason === "tp" && <span className="px-1.5 py-0.5 text-[9px] font-bold bg-green-100 text-green-600">TP</span>}
+                {t.exit_reason === "signal" && <span className="px-1.5 py-0.5 text-[9px] font-bold bg-neutral-100 text-black/50">SIG</span>}
+                {t.manual && <span className="px-1.5 py-0.5 text-[9px] font-bold bg-blue-100 text-blue-600">MAN</span>}
+                {!t.exit_reason && !t.manual && <span className="text-black/20">-</span>}
               </td>
             </tr>
           ))}

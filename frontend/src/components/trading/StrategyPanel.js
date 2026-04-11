@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { ChevronDown, Save, Trash2, Play, Code } from "lucide-react";
+import { ChevronDown, Save, Trash2, Play, Code, Shield } from "lucide-react";
 import CustomStrategyEditor from "./CustomStrategyEditor";
+import CsvUpload from "./CsvUpload";
+import ManualTrading from "./ManualTrading";
 
 const STRATEGY_TEMPLATES = {
   ma_crossover: {
@@ -41,11 +43,15 @@ export default function StrategyPanel({
   onRunBacktest, onRunCustomBacktest, loading,
   savedStrategies, onSaveStrategy, onDeleteStrategy, onLoadStrategy,
   customCode, onCustomCodeChange, customError,
+  onCsvDataLoaded, ohlcData, visibleBars, onManualTrade,
 }) {
   const [strategyType, setStrategyType] = useState("ma_crossover");
   const [params, setParams] = useState({ ...STRATEGY_TEMPLATES.ma_crossover.params });
   const [stratName, setStratName] = useState("");
   const [showSaved, setShowSaved] = useState(false);
+  const [stopLoss, setStopLoss] = useState("");
+  const [takeProfit, setTakeProfit] = useState("");
+  const [slTpMode, setSlTpMode] = useState("pct");
 
   const template = STRATEGY_TEMPLATES[strategyType];
 
@@ -61,10 +67,12 @@ export default function StrategyPanel({
   };
 
   const handleRun = () => {
+    const sl = stopLoss ? parseFloat(stopLoss) : null;
+    const tp = takeProfit ? parseFloat(takeProfit) : null;
     if (strategyType === "custom") {
-      onRunCustomBacktest(customCode);
+      onRunCustomBacktest(customCode, sl, tp, slTpMode);
     } else {
-      onRunBacktest(strategyType, params);
+      onRunBacktest(strategyType, params, sl, tp, slTpMode);
     }
   };
 
@@ -154,6 +162,56 @@ export default function StrategyPanel({
         </div>
       )}
 
+      {/* Risk Management */}
+      <div className="p-4 border-b border-black">
+        <div className="flex items-center gap-2 mb-3">
+          <Shield size={12} className="text-black/50" />
+          <span className="font-mono text-xs uppercase tracking-[0.2em] text-black/60">Risk Management</span>
+        </div>
+        <div className="flex gap-2 mb-2">
+          <div className="flex-1">
+            <label className="font-mono text-[10px] text-black/50 block mb-1">STOP LOSS</label>
+            <Input
+              data-testid="stop-loss-input"
+              type="number"
+              value={stopLoss}
+              onChange={(e) => setStopLoss(e.target.value)}
+              placeholder="0"
+              className="rounded-none border-black/30 h-8 font-mono text-xs focus:ring-0 focus:border-black"
+              step={slTpMode === "pct" ? 0.1 : 1}
+              min={0}
+            />
+          </div>
+          <div className="flex-1">
+            <label className="font-mono text-[10px] text-black/50 block mb-1">TAKE PROFIT</label>
+            <Input
+              data-testid="take-profit-input"
+              type="number"
+              value={takeProfit}
+              onChange={(e) => setTakeProfit(e.target.value)}
+              placeholder="0"
+              className="rounded-none border-black/30 h-8 font-mono text-xs focus:ring-0 focus:border-black"
+              step={slTpMode === "pct" ? 0.1 : 1}
+              min={0}
+            />
+          </div>
+        </div>
+        <div className="flex gap-0" data-testid="sl-tp-mode-selector">
+          {["pct", "pips"].map((mode) => (
+            <button
+              key={mode}
+              data-testid={`sl-tp-mode-${mode}`}
+              onClick={() => setSlTpMode(mode)}
+              className={`h-6 px-3 text-[10px] font-mono font-bold border border-black/30 -ml-px first:ml-0 transition-colors duration-150 ${
+                slTpMode === mode ? "bg-black text-white border-black" : "bg-white text-black/60 hover:bg-neutral-50"
+              }`}
+            >
+              {mode === "pct" ? "%" : "PIPS"}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Run & Save */}
       <div className="p-4 border-b border-black">
         <button
@@ -183,6 +241,16 @@ export default function StrategyPanel({
           </button>
         </div>
       </div>
+
+      {/* Manual Buy/Sell */}
+      <ManualTrading
+        ohlcData={ohlcData}
+        visibleBars={visibleBars}
+        onTradeComplete={onManualTrade}
+      />
+
+      {/* CSV Upload */}
+      <CsvUpload onDataLoaded={onCsvDataLoaded} />
 
       {/* Saved Strategies */}
       <div className="border-b border-black">

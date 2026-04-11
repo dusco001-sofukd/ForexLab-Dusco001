@@ -386,6 +386,208 @@ print("This should be blocked")
         
         return False
 
+    def test_backtest_with_sl_tp(self):
+        """Test backtest with stop loss and take profit"""
+        payload = {
+            "pair": "EUR-USD",
+            "timeframe": "1h",
+            "bars": 200,
+            "strategy_type": "ma_crossover",
+            "params": {"fast_period": 10, "slow_period": 20},
+            "stop_loss": 0.5,
+            "take_profit": 1.0,
+            "sl_tp_mode": "pct"
+        }
+        
+        try:
+            response = self.session.post(f"{self.api_url}/backtest", json=payload)
+            if response.status_code == 200:
+                data = response.json()
+                if "result" in data and "ohlc" in data:
+                    result = data["result"]
+                    trades = result.get("trades", [])
+                    
+                    # Check if trades have exit_reason field
+                    has_exit_reasons = all("exit_reason" in trade for trade in trades)
+                    
+                    # Check if some trades have SL/TP exit reasons
+                    sl_tp_trades = [t for t in trades if t.get("exit_reason") in ["sl", "tp"]]
+                    
+                    if has_exit_reasons:
+                        self.log_test("Backtest with SL/TP (exit_reason field)", True)
+                        if sl_tp_trades:
+                            self.log_test("Backtest with SL/TP (SL/TP exits found)", True)
+                        else:
+                            self.log_test("Backtest with SL/TP (SL/TP exits found)", False, "No SL/TP exits in trades")
+                        return True
+                    else:
+                        self.log_test("Backtest with SL/TP", False, "Trades missing exit_reason field")
+                else:
+                    self.log_test("Backtest with SL/TP", False, "No result in response")
+            else:
+                self.log_test("Backtest with SL/TP", False, f"Status {response.status_code}: {response.text}")
+        except Exception as e:
+            self.log_test("Backtest with SL/TP", False, f"Exception: {str(e)}")
+        
+        return False
+
+    def test_custom_backtest_with_sl_tp(self):
+        """Test custom backtest with stop loss and take profit"""
+        valid_code = """
+# Simple SMA crossover strategy
+fast = sma(closes, 8)
+slow = sma(closes, 21)
+
+for i in range(1, n):
+    if fast[i] is not None and slow[i] is not None:
+        if fast[i-1] is not None and slow[i-1] is not None:
+            if fast[i-1] <= slow[i-1] and fast[i] > slow[i]:
+                signals[i] = 1
+            elif fast[i-1] >= slow[i-1] and fast[i] < slow[i]:
+                signals[i] = -1
+"""
+        
+        payload = {
+            "pair": "EUR-USD",
+            "timeframe": "1h", 
+            "bars": 200,
+            "code": valid_code,
+            "stop_loss": 0.5,
+            "take_profit": 1.0,
+            "sl_tp_mode": "pct"
+        }
+        
+        try:
+            response = self.session.post(f"{self.api_url}/backtest/custom", json=payload)
+            if response.status_code == 200:
+                data = response.json()
+                if "result" in data and "ohlc" in data:
+                    result = data["result"]
+                    trades = result.get("trades", [])
+                    
+                    # Check if trades have exit_reason field
+                    has_exit_reasons = all("exit_reason" in trade for trade in trades)
+                    
+                    if has_exit_reasons:
+                        self.log_test("Custom Backtest with SL/TP", True)
+                        return True
+                    else:
+                        self.log_test("Custom Backtest with SL/TP", False, "Trades missing exit_reason field")
+                else:
+                    self.log_test("Custom Backtest with SL/TP", False, "No result in response")
+            else:
+                self.log_test("Custom Backtest with SL/TP", False, f"Status {response.status_code}: {response.text}")
+        except Exception as e:
+            self.log_test("Custom Backtest with SL/TP", False, f"Exception: {str(e)}")
+        
+        return False
+
+    def test_csv_upload_valid(self):
+        """Test CSV upload with valid OHLC data"""
+        valid_csv = """date,open,high,low,close,volume
+2024-01-01 00:00:00,1.0850,1.0870,1.0840,1.0860,1000
+2024-01-01 01:00:00,1.0860,1.0880,1.0850,1.0875,1200
+2024-01-01 02:00:00,1.0875,1.0890,1.0865,1.0880,1100
+2024-01-01 03:00:00,1.0880,1.0895,1.0870,1.0885,1300
+2024-01-01 04:00:00,1.0885,1.0900,1.0875,1.0890,1150"""
+        
+        payload = {
+            "csv_text": valid_csv,
+            "filename": "test_data.csv"
+        }
+        
+        try:
+            response = self.session.post(f"{self.api_url}/forex/upload-csv", json=payload)
+            if response.status_code == 200:
+                data = response.json()
+                if "data" in data and "pair_name" in data:
+                    ohlc_data = data["data"]
+                    if len(ohlc_data) > 0:
+                        # Check OHLC structure
+                        first_bar = ohlc_data[0]
+                        required_fields = ["time", "open", "high", "low", "close", "volume"]
+                        if all(field in first_bar for field in required_fields):
+                            self.log_test("CSV Upload (Valid Data)", True)
+                            return True
+                        else:
+                            self.log_test("CSV Upload (Valid Data)", False, "Missing OHLC fields in parsed data")
+                    else:
+                        self.log_test("CSV Upload (Valid Data)", False, "No data parsed from CSV")
+                else:
+                    self.log_test("CSV Upload (Valid Data)", False, "Missing data or pair_name in response")
+            else:
+                self.log_test("CSV Upload (Valid Data)", False, f"Status {response.status_code}: {response.text}")
+        except Exception as e:
+            self.log_test("CSV Upload (Valid Data)", False, f"Exception: {str(e)}")
+        
+        return False
+
+    def test_csv_upload_invalid(self):
+        """Test CSV upload with invalid data (missing columns)"""
+        invalid_csv = """date,price
+2024-01-01 00:00:00,1.0850
+2024-01-01 01:00:00,1.0860"""
+        
+        payload = {
+            "csv_text": invalid_csv,
+            "filename": "invalid_data.csv"
+        }
+        
+        try:
+            response = self.session.post(f"{self.api_url}/forex/upload-csv", json=payload)
+            if response.status_code == 400:
+                data = response.json()
+                detail = data.get("detail", "").lower()
+                if "missing" in detail and "column" in detail:
+                    self.log_test("CSV Upload (Invalid Data)", True)
+                    return True
+                else:
+                    self.log_test("CSV Upload (Invalid Data)", False, "Should return missing column error")
+            else:
+                self.log_test("CSV Upload (Invalid Data)", False, f"Expected 400, got {response.status_code}")
+        except Exception as e:
+            self.log_test("CSV Upload (Invalid Data)", False, f"Exception: {str(e)}")
+        
+        return False
+
+    def test_sl_tp_mode_pips(self):
+        """Test backtest with SL/TP in PIPS mode"""
+        payload = {
+            "pair": "EUR-USD",
+            "timeframe": "1h",
+            "bars": 200,
+            "strategy_type": "ma_crossover",
+            "params": {"fast_period": 10, "slow_period": 20},
+            "stop_loss": 50,
+            "take_profit": 100,
+            "sl_tp_mode": "pips"
+        }
+        
+        try:
+            response = self.session.post(f"{self.api_url}/backtest", json=payload)
+            if response.status_code == 200:
+                data = response.json()
+                if "result" in data:
+                    result = data["result"]
+                    trades = result.get("trades", [])
+                    
+                    # Check if trades have exit_reason field
+                    has_exit_reasons = all("exit_reason" in trade for trade in trades)
+                    
+                    if has_exit_reasons:
+                        self.log_test("Backtest with SL/TP (PIPS mode)", True)
+                        return True
+                    else:
+                        self.log_test("Backtest with SL/TP (PIPS mode)", False, "Trades missing exit_reason field")
+                else:
+                    self.log_test("Backtest with SL/TP (PIPS mode)", False, "No result in response")
+            else:
+                self.log_test("Backtest with SL/TP (PIPS mode)", False, f"Status {response.status_code}: {response.text}")
+        except Exception as e:
+            self.log_test("Backtest with SL/TP (PIPS mode)", False, f"Exception: {str(e)}")
+        
+        return False
+
     def run_all_tests(self):
         """Run all API tests"""
         print("🚀 Starting Forex Strategy Tester API Tests")
@@ -417,6 +619,14 @@ print("This should be blocked")
             print("\n🐍 Testing Custom Strategy Sandbox:")
             self.test_custom_backtest_valid()
             self.test_custom_backtest_forbidden()
+            
+            # Test Phase 3 features: SL/TP and CSV upload
+            print("\n🛡️ Testing Phase 3 Features (SL/TP & CSV):")
+            self.test_backtest_with_sl_tp()
+            self.test_custom_backtest_with_sl_tp()
+            self.test_sl_tp_mode_pips()
+            self.test_csv_upload_valid()
+            self.test_csv_upload_invalid()
             
             self.test_auth_logout()
         

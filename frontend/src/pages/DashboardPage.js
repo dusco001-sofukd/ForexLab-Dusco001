@@ -8,8 +8,9 @@ import StrategyPanel from "../components/trading/StrategyPanel";
 import IndicatorPanel from "../components/trading/IndicatorPanel";
 import BacktestResults from "../components/trading/BacktestResults";
 import TradeHistory from "../components/trading/TradeHistory";
+import EquityCurve from "../components/trading/EquityCurve";
 import DrawingToolbar, { DrawingOverlay } from "../components/trading/DrawingTools";
-import { LogOut, TrendingUp, BarChart3, List, Radio, Wifi, WifiOff } from "lucide-react";
+import { LogOut, TrendingUp, BarChart3, List, Radio, Wifi, WifiOff, LineChart } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -58,6 +59,9 @@ for i in range(1, n):
   // Drawing tools
   const [drawingTool, setDrawingTool] = useState("select");
   const [drawings, setDrawings] = useState([]);
+
+  // Manual trades
+  const [manualTrades, setManualTrades] = useState([]);
 
   // Bottom panel tab
   const [bottomTab, setBottomTab] = useState("results");
@@ -138,7 +142,7 @@ for i in range(1, n):
   }, [activeIndicators, pair, timeframe, ohlcData.length]);
 
   // Run backtest (built-in strategies)
-  const handleRunBacktest = async (strategyType, params) => {
+  const handleRunBacktest = async (strategyType, params, stopLoss, takeProfit, slTpMode) => {
     setLoadingBacktest(true);
     setCustomError("");
     try {
@@ -148,6 +152,9 @@ for i in range(1, n):
         bars: 500,
         strategy_type: strategyType,
         params,
+        stop_loss: stopLoss,
+        take_profit: takeProfit,
+        sl_tp_mode: slTpMode || "pct",
       }, { withCredentials: true });
       setOhlcData(data.ohlc);
       setBacktestResult(data.result);
@@ -161,7 +168,7 @@ for i in range(1, n):
   };
 
   // Run custom backtest
-  const handleRunCustomBacktest = async (code) => {
+  const handleRunCustomBacktest = async (code, stopLoss, takeProfit, slTpMode) => {
     setLoadingBacktest(true);
     setCustomError("");
     try {
@@ -170,6 +177,9 @@ for i in range(1, n):
         timeframe,
         bars: 500,
         code,
+        stop_loss: stopLoss,
+        take_profit: takeProfit,
+        sl_tp_mode: slTpMode || "pct",
       }, { withCredentials: true });
       setOhlcData(data.ohlc);
       setBacktestResult(data.result);
@@ -221,6 +231,19 @@ for i in range(1, n):
     setDrawingTool("select");
   }, []);
   const clearDrawings = useCallback(() => setDrawings([]), []);
+
+  // CSV data loaded
+  const handleCsvDataLoaded = useCallback((data, pairName) => {
+    setOhlcData(data);
+    setVisibleBars(50);
+    setBacktestResult(null);
+    setActualSource("csv:" + pairName);
+  }, []);
+
+  // Manual trade completed
+  const handleManualTrade = useCallback((trade) => {
+    setManualTrades((prev) => [...prev, trade]);
+  }, []);
 
   const handleLogout = async () => {
     await logout();
@@ -276,6 +299,9 @@ for i in range(1, n):
           {actualSource === "generated_fallback" && (
             <span className="font-mono text-[10px] text-amber-600">FALLBACK</span>
           )}
+          {actualSource.startsWith("csv:") && (
+            <span className="font-mono text-[10px] text-blue-600 font-bold">CSV: {actualSource.slice(4)}</span>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <span className="font-mono text-xs text-black/50" data-testid="user-email">{user?.email}</span>
@@ -308,6 +334,10 @@ for i in range(1, n):
             customCode={customCode}
             onCustomCodeChange={setCustomCode}
             customError={customError}
+            onCsvDataLoaded={handleCsvDataLoaded}
+            ohlcData={ohlcData}
+            visibleBars={visibleBars}
+            onManualTrade={handleManualTrade}
           />
           <IndicatorPanel
             activeIndicators={activeIndicators}
@@ -374,18 +404,28 @@ for i in range(1, n):
                 <BarChart3 size={12} /> Results
               </button>
               <button
+                data-testid="tab-equity"
+                onClick={() => setBottomTab("equity")}
+                className={`h-9 px-5 font-mono text-xs font-bold uppercase tracking-wide border-r border-black transition-colors duration-150 flex items-center gap-2 ${
+                  bottomTab === "equity" ? "bg-black text-white" : "bg-white text-black hover:bg-neutral-50"
+                }`}
+              >
+                <LineChart size={12} /> Equity
+              </button>
+              <button
                 data-testid="tab-trades"
                 onClick={() => setBottomTab("trades")}
                 className={`h-9 px-5 font-mono text-xs font-bold uppercase tracking-wide border-r border-black transition-colors duration-150 flex items-center gap-2 ${
                   bottomTab === "trades" ? "bg-black text-white" : "bg-white text-black hover:bg-neutral-50"
                 }`}
               >
-                <List size={12} /> Trades ({backtestResult?.trades?.length || 0})
+                <List size={12} /> Trades ({(backtestResult?.trades?.length || 0) + manualTrades.length})
               </button>
             </div>
             <div className="flex-1 overflow-auto">
               {bottomTab === "results" && <BacktestResults result={backtestResult} />}
-              {bottomTab === "trades" && <TradeHistory trades={backtestResult?.trades} />}
+              {bottomTab === "equity" && <EquityCurve equityCurve={backtestResult?.equity_curve} />}
+              {bottomTab === "trades" && <TradeHistory trades={[...(backtestResult?.trades || []), ...manualTrades]} />}
             </div>
           </div>
         </div>

@@ -484,6 +484,9 @@ class BacktestRequest(BaseModel):
     strategy_type: str
     params: Dict[str, Any]
     strategy_id: Optional[str] = None
+    stop_loss: Optional[float] = None   # in pips or percentage
+    take_profit: Optional[float] = None # in pips or percentage
+    sl_tp_mode: str = "pct"  # "pct" or "pips"
 
 # ─── Strategy CRUD ───
 @api_router.post("/strategies")
@@ -516,13 +519,130 @@ async def delete_strategy(strategy_id: str, user: dict = Depends(get_current_use
     return {"message": "Deleted"}
 
 # ─── Backtest Engine ───
-def run_backtest(ohlc: List[dict], strategy_type: str, params: dict):
+def execute_trades(ohlc: List[dict], signals: List[int], stop_loss: float = None, take_profit: float = None, sl_tp_mode: str = "pct"):
+    """Shared trade execution engine with SL/TP support."""
     closes = [c["close"] for c in ohlc]
     highs = [c["high"] for c in ohlc]
     lows = [c["low"] for c in ohlc]
     n = len(closes)
-    
-    signals = [0] * n  # 1 = buy, -1 = sell, 0 = none
+
+    trades = []
+    position = None
+    equity = 10000.0
+    equity_curve = [equity]
+    peak_equity = equity
+    max_drawdown = 0
+
+    for i in range(n):
+        # Check SL/TP for existing positions
+        if position is not None and i > position["entry_idx"]:
+            entry_p = position["entry_price"]
+            is_long = position["type"] == "long"
+
+            sl_hit = False
+            tp_hit = False
+            exit_price = None
+
+            if stop_loss and stop_loss > 0:
+                if sl_tp_mode == "pct":
+                    sl_level = entry_p * (1 - stop_loss / 100) if is_long else entry_p * (1 + stop_loss / 100)
+                else:
+                    pip_val = 0.01 if "JPY" in str(ohlc[0].get("time", "")) else 0.0001
+                    sl_level = entry_p - stop_loss * pip_val if is_long else entry_p + stop_loss * pip_val
+                if is_long and lows[i] <= sl_level:
+                    sl_hit = True
+                    exit_price = sl_level
+                elif not is_long and highs[i] >= sl_level:
+                    sl_hit = True
+                    exit_price = sl_level
+
+            if take_profit and take_profit > 0 and not sl_hit:
+                if sl_tp_mode == "pct":
+                    tp_level = entry_p * (1 + take_profit / 100) if is_long else entry_p * (1 - take_profit / 100)
+                else:
+                    pip_val = 0.01 if "JPY" in str(ohlc[0].get("time", "")) else 0.0001
+                    tp_level = entry_p + take_profit * pip_val if is_long else entry_p - take_profit * pip_val
+                if is_long and highs[i] >= tp_level:
+                    tp_hit = True
+                    exit_price = tp_level
+                elif not is_long and lows[i] <= tp_level:
+                    tp_hit = True
+                    exit_price = tp_level
+
+            if sl_hit or tp_hit:
+                pnl_pct = (exit_price - entry_p) / entry_p if is_long else (entry_p - exit_price) / entry_p
+                pnl = equity * pnl_pct
+                equity += pnl
+                exit_reason = "sl" if sl_hit else "tp"
+                trades.append({
+                    "entry_time": position["entry_time"], "exit_time": ohlc[i]["time"],
+                    "entry_price": entry_p, "exit_price": round(exit_price, 6),
+                    "type": position["type"], "pnl": round(pnl, 2), "pnl_pct": round(pnl_pct * 100, 4),
+                    "entry_idx": position["entry_idx"], "exit_idx": i, "exit_reason": exit_reason,
+                })
+                position = None
+
+        # Process signals
+        if position is None:
+            if signals[i] == 1:
+                position = {"entry_price": closes[i], "entry_idx": i, "entry_time": ohlc[i]["time"], "type": "long"}
+            elif signals[i] == -1:
+                position = {"entry_price": closes[i], "entry_idx": i, "entry_time": ohlc[i]["time"], "type": "short"}
+        elif position["type"] == "long" and signals[i] == -1:
+            pnl_pct = (closes[i] - position["entry_price"]) / position["entry_price"]
+            pnl = equity * pnl_pct
+            equity += pnl
+            trades.append({
+                "entry_time": position["entry_time"], "exit_time": ohlc[i]["time"],
+                "entry_price": position["entry_price"], "exit_price": closes[i],
+                "type": "long", "pnl": round(pnl, 2), "pnl_pct": round(pnl_pct * 100, 4),
+                "entry_idx": position["entry_idx"], "exit_idx": i, "exit_reason": "signal",
+            })
+            position = {"entry_price": closes[i], "entry_idx": i, "entry_time": ohlc[i]["time"], "type": "short"}
+        elif position["type"] == "short" and signals[i] == 1:
+            pnl_pct = (position["entry_price"] - closes[i]) / position["entry_price"]
+            pnl = equity * pnl_pct
+            equity += pnl
+            trades.append({
+                "entry_time": position["entry_time"], "exit_time": ohlc[i]["time"],
+                "entry_price": position["entry_price"], "exit_price": closes[i],
+                "type": "short", "pnl": round(pnl, 2), "pnl_pct": round(pnl_pct * 100, 4),
+                "entry_idx": position["entry_idx"], "exit_idx": i, "exit_reason": "signal",
+            })
+            position = {"entry_price": closes[i], "entry_idx": i, "entry_time": ohlc[i]["time"], "type": "long"}
+
+        equity_curve.append(round(equity, 2))
+        if equity > peak_equity:
+            peak_equity = equity
+        dd = (peak_equity - equity) / peak_equity * 100 if peak_equity > 0 else 0
+        if dd > max_drawdown:
+            max_drawdown = dd
+
+    wins = [t for t in trades if t["pnl"] > 0]
+    losses_list = [t for t in trades if t["pnl"] <= 0]
+    total_pnl = sum(t["pnl"] for t in trades)
+
+    return {
+        "total_trades": len(trades),
+        "winning_trades": len(wins),
+        "losing_trades": len(losses_list),
+        "win_rate": round(len(wins) / len(trades) * 100, 2) if trades else 0,
+        "total_pnl": round(total_pnl, 2),
+        "total_pnl_pct": round(total_pnl / 10000 * 100, 2),
+        "max_drawdown": round(max_drawdown, 2),
+        "avg_win": round(sum(t["pnl"] for t in wins) / len(wins), 2) if wins else 0,
+        "avg_loss": round(sum(t["pnl"] for t in losses_list) / len(losses_list), 2) if losses_list else 0,
+        "profit_factor": round(abs(sum(t["pnl"] for t in wins)) / abs(sum(t["pnl"] for t in losses_list)), 2) if losses_list and sum(t["pnl"] for t in losses_list) != 0 else 0,
+        "final_equity": round(equity, 2),
+        "equity_curve": equity_curve,
+        "trades": trades,
+        "signals": signals,
+    }
+
+def run_backtest(ohlc: List[dict], strategy_type: str, params: dict, stop_loss: float = None, take_profit: float = None, sl_tp_mode: str = "pct"):
+    closes = [c["close"] for c in ohlc]
+    n = len(closes)
+    signals = [0] * n
     
     if strategy_type == "ma_crossover":
         fast_p = params.get("fast_period", 10)
@@ -581,79 +701,7 @@ def run_backtest(ohlc: List[dict], strategy_type: str, params: dict):
                 elif macd_line[i-1] >= signal_line[i-1] and macd_line[i] < signal_line[i]:
                     signals[i] = -1
     
-    # Execute trades
-    trades = []
-    position = None
-    equity = 10000.0
-    equity_curve = [equity]
-    peak_equity = equity
-    max_drawdown = 0
-    
-    for i in range(n):
-        if signals[i] == 1 and position is None:
-            position = {"entry_price": closes[i], "entry_idx": i, "entry_time": ohlc[i]["time"], "type": "long"}
-        elif signals[i] == -1 and position is not None and position["type"] == "long":
-            pnl_pct = (closes[i] - position["entry_price"]) / position["entry_price"]
-            pnl = equity * pnl_pct
-            equity += pnl
-            trades.append({
-                "entry_time": position["entry_time"],
-                "exit_time": ohlc[i]["time"],
-                "entry_price": position["entry_price"],
-                "exit_price": closes[i],
-                "type": "long",
-                "pnl": round(pnl, 2),
-                "pnl_pct": round(pnl_pct * 100, 4),
-                "entry_idx": position["entry_idx"],
-                "exit_idx": i,
-            })
-            position = None
-        elif signals[i] == -1 and position is None:
-            position = {"entry_price": closes[i], "entry_idx": i, "entry_time": ohlc[i]["time"], "type": "short"}
-        elif signals[i] == 1 and position is not None and position["type"] == "short":
-            pnl_pct = (position["entry_price"] - closes[i]) / position["entry_price"]
-            pnl = equity * pnl_pct
-            equity += pnl
-            trades.append({
-                "entry_time": position["entry_time"],
-                "exit_time": ohlc[i]["time"],
-                "entry_price": position["entry_price"],
-                "exit_price": closes[i],
-                "type": "short",
-                "pnl": round(pnl, 2),
-                "pnl_pct": round(pnl_pct * 100, 4),
-                "entry_idx": position["entry_idx"],
-                "exit_idx": i,
-            })
-            position = None
-        
-        equity_curve.append(round(equity, 2))
-        if equity > peak_equity:
-            peak_equity = equity
-        dd = (peak_equity - equity) / peak_equity * 100 if peak_equity > 0 else 0
-        if dd > max_drawdown:
-            max_drawdown = dd
-    
-    wins = [t for t in trades if t["pnl"] > 0]
-    losses_list = [t for t in trades if t["pnl"] <= 0]
-    total_pnl = sum(t["pnl"] for t in trades)
-    
-    return {
-        "total_trades": len(trades),
-        "winning_trades": len(wins),
-        "losing_trades": len(losses_list),
-        "win_rate": round(len(wins) / len(trades) * 100, 2) if trades else 0,
-        "total_pnl": round(total_pnl, 2),
-        "total_pnl_pct": round(total_pnl / 10000 * 100, 2),
-        "max_drawdown": round(max_drawdown, 2),
-        "avg_win": round(sum(t["pnl"] for t in wins) / len(wins), 2) if wins else 0,
-        "avg_loss": round(sum(t["pnl"] for t in losses_list) / len(losses_list), 2) if losses_list else 0,
-        "profit_factor": round(abs(sum(t["pnl"] for t in wins)) / abs(sum(t["pnl"] for t in losses_list)), 2) if losses_list and sum(t["pnl"] for t in losses_list) != 0 else 0,
-        "final_equity": round(equity, 2),
-        "equity_curve": equity_curve,
-        "trades": trades,
-        "signals": signals,
-    }
+    return execute_trades(ohlc, signals, stop_loss, take_profit, sl_tp_mode)
 
 @api_router.post("/backtest")
 async def run_backtest_endpoint(req: BacktestRequest, user: dict = Depends(get_current_user)):
@@ -661,7 +709,7 @@ async def run_backtest_endpoint(req: BacktestRequest, user: dict = Depends(get_c
     if pair not in PAIRS:
         raise HTTPException(404, f"Pair {pair} not found")
     ohlc = generate_ohlc_data(pair, req.timeframe, min(req.bars, 2000))
-    result = run_backtest(ohlc, req.strategy_type, req.params)
+    result = run_backtest(ohlc, req.strategy_type, req.params, req.stop_loss, req.take_profit, req.sl_tp_mode)
     
     # Save backtest
     doc = {
@@ -688,6 +736,9 @@ class CustomBacktestRequest(BaseModel):
     timeframe: str = "1h"
     bars: int = 500
     code: str
+    stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
+    sl_tp_mode: str = "pct"
 
 @api_router.post("/backtest/custom")
 async def run_custom_backtest(req: CustomBacktestRequest, user: dict = Depends(get_current_user)):
@@ -760,60 +811,7 @@ async def run_custom_backtest(req: CustomBacktestRequest, user: dict = Depends(g
     except Exception as e:
         raise HTTPException(400, f"Strategy execution error: {type(e).__name__}: {str(e)}")
     
-    # Run trade execution with the signals
-    trades = []
-    position = None
-    equity = 10000.0
-    equity_curve = [equity]
-    peak_equity = equity
-    max_drawdown = 0
-    
-    for i in range(n):
-        if signals[i] == 1 and position is None:
-            position = {"entry_price": closes[i], "entry_idx": i, "entry_time": ohlc[i]["time"], "type": "long"}
-        elif signals[i] == -1 and position is not None and position["type"] == "long":
-            pnl_pct = (closes[i] - position["entry_price"]) / position["entry_price"]
-            pnl = equity * pnl_pct
-            equity += pnl
-            trades.append({"entry_time": position["entry_time"], "exit_time": ohlc[i]["time"], "entry_price": position["entry_price"], "exit_price": closes[i], "type": "long", "pnl": round(pnl, 2), "pnl_pct": round(pnl_pct * 100, 4), "entry_idx": position["entry_idx"], "exit_idx": i})
-            position = None
-        elif signals[i] == -1 and position is None:
-            position = {"entry_price": closes[i], "entry_idx": i, "entry_time": ohlc[i]["time"], "type": "short"}
-        elif signals[i] == 1 and position is not None and position["type"] == "short":
-            pnl_pct = (position["entry_price"] - closes[i]) / position["entry_price"]
-            pnl = equity * pnl_pct
-            equity += pnl
-            trades.append({"entry_time": position["entry_time"], "exit_time": ohlc[i]["time"], "entry_price": position["entry_price"], "exit_price": closes[i], "type": "short", "pnl": round(pnl, 2), "pnl_pct": round(pnl_pct * 100, 4), "entry_idx": position["entry_idx"], "exit_idx": i})
-            position = None
-        
-        equity_curve.append(round(equity, 2))
-        if equity > peak_equity:
-            peak_equity = equity
-        dd = (peak_equity - equity) / peak_equity * 100 if peak_equity > 0 else 0
-        if dd > max_drawdown:
-            max_drawdown = dd
-    
-    wins = [t for t in trades if t["pnl"] > 0]
-    losses_list = [t for t in trades if t["pnl"] <= 0]
-    total_pnl = sum(t["pnl"] for t in trades)
-    
-    result = {
-        "total_trades": len(trades),
-        "winning_trades": len(wins),
-        "losing_trades": len(losses_list),
-        "win_rate": round(len(wins) / len(trades) * 100, 2) if trades else 0,
-        "total_pnl": round(total_pnl, 2),
-        "total_pnl_pct": round(total_pnl / 10000 * 100, 2),
-        "max_drawdown": round(max_drawdown, 2),
-        "avg_win": round(sum(t["pnl"] for t in wins) / len(wins), 2) if wins else 0,
-        "avg_loss": round(sum(t["pnl"] for t in losses_list) / len(losses_list), 2) if losses_list else 0,
-        "profit_factor": round(abs(sum(t["pnl"] for t in wins)) / abs(sum(t["pnl"] for t in losses_list)), 2) if losses_list and sum(t["pnl"] for t in losses_list) != 0 else 0,
-        "final_equity": round(equity, 2),
-        "equity_curve": equity_curve,
-        "trades": trades,
-        "signals": signals,
-    }
-    
+    result = execute_trades(ohlc, signals, req.stop_loss, req.take_profit, req.sl_tp_mode)
     return {"ohlc": ohlc, "result": result}
 
 @api_router.get("/backtests")
@@ -827,6 +825,97 @@ async def list_backtests(user: dict = Depends(get_current_user)):
         b["id"] = str(b.pop("_id"))
         results.append(b)
     return {"backtests": results}
+
+# ─── CSV Upload ───
+import csv
+import io
+
+class CsvUploadRequest(BaseModel):
+    csv_text: str
+    filename: str = "custom"
+
+@api_router.post("/forex/upload-csv")
+async def upload_csv(req: CsvUploadRequest, user: dict = Depends(get_current_user)):
+    try:
+        reader = csv.reader(io.StringIO(req.csv_text.strip()))
+        rows = list(reader)
+    except Exception as e:
+        raise HTTPException(400, f"CSV parse error: {str(e)}")
+
+    if len(rows) < 2:
+        raise HTTPException(400, "CSV must have at least a header row and one data row")
+
+    # Detect header
+    header = [h.strip().lower() for h in rows[0]]
+    has_header = any(h in header for h in ["open", "high", "low", "close", "date", "time", "datetime"])
+    data_rows = rows[1:] if has_header else rows
+
+    # Map columns
+    col_map = {}
+    if has_header:
+        for i, h in enumerate(header):
+            if h in ["date", "time", "datetime", "timestamp"]:
+                col_map["time"] = i
+            elif h == "open" or h == "o":
+                col_map["open"] = i
+            elif h == "high" or h == "h":
+                col_map["high"] = i
+            elif h == "low" or h == "l":
+                col_map["low"] = i
+            elif h == "close" or h == "c":
+                col_map["close"] = i
+            elif h in ["volume", "vol", "v"]:
+                col_map["volume"] = i
+    else:
+        # Assume: date, open, high, low, close, volume
+        if len(rows[0]) >= 5:
+            col_map = {"time": 0, "open": 1, "high": 2, "low": 3, "close": 4}
+            if len(rows[0]) >= 6:
+                col_map["volume"] = 5
+
+    required = ["open", "high", "low", "close"]
+    for r in required:
+        if r not in col_map:
+            raise HTTPException(400, f"Missing required column: {r}. Expected columns: date/time, open, high, low, close, volume")
+
+    data = []
+    for idx, row in enumerate(data_rows):
+        if len(row) < max(col_map.values()) + 1:
+            continue
+        try:
+            time_str = row[col_map["time"]].strip() if "time" in col_map else f"2026-01-01T{idx:05d}"
+            o = float(row[col_map["open"]].strip())
+            h = float(row[col_map["high"]].strip())
+            l = float(row[col_map["low"]].strip())
+            c = float(row[col_map["close"]].strip())
+            v = int(float(row[col_map["volume"]].strip())) if "volume" in col_map else 0
+
+            # Parse timestamp
+            ts = idx
+            try:
+                for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%m/%d/%Y %H:%M", "%m/%d/%Y"]:
+                    try:
+                        dt = datetime.strptime(time_str, fmt).replace(tzinfo=timezone.utc)
+                        ts = int(dt.timestamp())
+                        break
+                    except ValueError:
+                        continue
+            except Exception:
+                ts = idx + 1000000000
+
+            data.append({
+                "time": time_str,
+                "timestamp": ts,
+                "open": o, "high": h, "low": l, "close": c, "volume": v,
+            })
+        except (ValueError, IndexError):
+            continue
+
+    if len(data) < 2:
+        raise HTTPException(400, "Could not parse enough valid OHLC rows from CSV")
+
+    pair_name = req.filename.replace(".csv", "").replace(".txt", "").upper()[:20]
+    return {"pair_name": pair_name, "data": data, "count": len(data)}
 
 # ─── Admin Seeding ───
 async def seed_admin():
