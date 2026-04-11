@@ -1,0 +1,94 @@
+{
+  "theme": "light",
+  "archetype": "4 (Swiss & High-Contrast)",
+  "emotion_and_vibe": "Precise, objective, authoritative, and clinical. Built for professional strategy developers who demand a command-center feel with extreme data visibility.",
+  "typography": {
+    "heading_font": "Cabinet Grotesk",
+    "body_font": "IBM Plex Sans",
+    "mono_font": "IBM Plex Mono",
+    "usage_rules": {
+      "h1": "text-4xl sm:text-5xl tracking-tight font-black uppercase text-black",
+      "h2": "text-2xl sm:text-3xl tracking-tight font-bold text-black",
+      "h3": "text-xl font-bold uppercase tracking-wide text-black",
+      "body": "text-base font-medium text-black/80",
+      "data_numbers": "font-mono text-sm tracking-tight text-black",
+      "labels": "text-xs font-mono uppercase tracking-[0.2em] text-black/60"
+    }
+  },
+  "colors": {
+    "background": "#FFFFFF",
+    "surface": "#FFFFFF",
+    "surface_hover": "#F5F5F5",
+    "text_primary": "#0A0A0A",
+    "text_secondary": "#525252",
+    "border": "#000000",
+    "chart_specific": {
+      "grid": "#000000",
+      "bearish_candle": "#2563EB",
+      "bullish_candle": "#DC2626",
+      "price_line": "#16A34A"
+    },
+    "status": {
+      "profit": "#16A34A",
+      "loss": "#DC2626",
+      "neutral": "#2563EB"
+    },
+    "cta": {
+      "background": "#0A0A0A",
+      "text": "#FFFFFF",
+      "hover_background": "#262626"
+    }
+  },
+  "layout_and_spacing": {
+    "strategy": "The 'Control Room' Grid (For Dashboards/Analytics)",
+    "rules": [
+      "Use sharp edges (rounded-none) for all components.",
+      "Use border-collapse style layout. Every panel is separated by a 1px solid black border.",
+      "No gaps between main panels (gap-0), rely on borders to separate areas.",
+      "Internal padding inside panels must be generous (p-6 to p-8).",
+      "Fill 100% of the screen height (h-screen) with grid layouts, no jagged bottoms."
+    ],
+    "structure": {
+      "sidebar": "col-span-1 border-r border-black h-full flex flex-col bg-white",
+      "main_chart": "col-span-3 border-b border-black h-full bg-white",
+      "bottom_panel": "col-span-3 h-64 border-t border-black bg-white"
+    }
+  },
+  "component_strategies": {
+    "cards_and_panels": "Cardless approach. Use raw div containers with border-black border-[1px] and rounded-none. No shadows for static layout.",
+    "buttons": "Sharp rectangles. bg-black text-white px-6 py-3 font-mono uppercase text-sm font-bold hover:bg-neutral-800 transition-colors duration-200. For secondary buttons: bg-white text-black border-black border-[1px] hover:bg-neutral-100.",
+    "inputs_and_selects": "Use Shadcn components but strip away radii (rounded-none). Add solid 1px black borders. focus:ring-0 focus:border-black focus:bg-neutral-50.",
+    "modals_and_dropdowns": "Solid white background, 1px black border, solid black shadow (shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]). No glassmorphism.",
+    "tables": "Trade History Table must have border-b border-black on every row. Header row must be font-mono uppercase text-xs border-b-2 border-black."
+  },
+  "motion_and_interaction": {
+    "hover_states": "Hard background color flips (e.g., white to black) on interactive list items.",
+    "transitions": "Instant or very fast (duration-150) for a snappy, technical feel. No slow fades.",
+    "chart_interactions": "Crosshair should be crisp 1px black dashed line. Replay controls should give immediate visual feedback (active state = inverted colors)."
+  },
+  "images_and_media": {
+    "rules": "Minimal use of images. Rely on typography and data visualization.",
+    "urls": [
+      {
+        "category": "auth_background",
+        "description": "Minimalist white architectural grid, abstract financial data visualization concept. Use for Login/Register page background.",
+        "url": "https://static.prod-images.emergentagent.com/jobs/ab2522d4-0f38-41c9-8300-e3f1b1859aa2/images/0089845b23aa63ef97e1bcea1c6efcabe225ea67ed73f43f52fc86cf794168f6.png"
+      },
+      {
+        "category": "dashboard_texture",
+        "description": "Crisp white marble texture with subtle straight black grid lines. Can be used as a very subtle background layer for empty states or modal backdrops (opacity 20%).",
+        "url": "https://static.prod-images.emergentagent.com/jobs/ab2522d4-0f38-41c9-8300-e3f1b1859aa2/images/861d176672b40114e46799999bd1a0bb7fa79decbf317643027d513ddf9df4ed.png"
+      }
+    ]
+  },
+  "specific_instructions_for_main_agent": [
+    "Install fonts: Cabinet Grotesk (for headers), IBM Plex Mono (for numbers/tickers), and IBM Plex Sans (for UI body).",
+    "For the chart, implement an interactive library like 'lightweight-charts' (TradingView) or 'recharts'.",
+    "CRITICAL CHART COLORS: Ensure the chart uses EXACTLY these values as requested by user - Background: #FFFFFF, Grid lines: #000000, Bearish (Down) Candles: #2563EB (Blue), Bullish (Up) Candles: #DC2626 (Red), Price Line: #16A34A (Green).",
+    "The Replay Controls (Play, Pause, Step, Speed, Jump) must be built as a floating or sticky toolbar below or above the chart, using Lucide icons in sharp black squares.",
+    "The dashboard layout should be an edge-to-edge grid (w-full h-screen) with no outer margins. It should feel like a native desktop terminal.",
+    "Include 'data-testid' attributes on all strategy builder inputs, replay controls, and trade history table rows.",
+    "Do not use Shadcn 'Card' components out-of-the-box if they have rounded corners and soft shadows. Override them to rounded-none and border-black.",
+    "Built-in strategy templates (MA Crossover, RSI, Bollinger Bands, MACD) must be selectable via a clean, monochromatic dropdown or list in the strategy builder panel."
+  ]
+}
